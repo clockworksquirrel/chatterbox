@@ -105,8 +105,16 @@ class ChatterboxVC:
             if isinstance(audio, str):
                 audio_16, _ = librosa.load(audio, sr=S3_SR)
                 audio_16 = torch.from_numpy(audio_16).float().to(self.device)[None, ]
+            elif isinstance(audio, torch.Tensor):
+                # Validate tensor shape and move to device if needed
+                if audio.dim() == 1:
+                    audio_16 = audio.unsqueeze(0)
+                else:
+                    audio_16 = audio
+                if audio_16.device != self.device:
+                    audio_16 = audio_16.to(self.device)
             else:
-                audio_16 = audio.to(self.device)
+                raise TypeError(f"audio must be a file path (str) or torch.Tensor, got {type(audio)}")
 
             s3_tokens, _ = self.s3gen.tokenizer(audio_16)
             wav, _ = self.s3gen.inference(
