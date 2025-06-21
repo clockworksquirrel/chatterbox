@@ -17,6 +17,11 @@ class FastMPSRotaryEmbedding(nn.Module):
     """
     
     def __init__(self, dim=None, max_position_embeddings=2048, base=10000, device=None, config=None):
+        """
+        Initializes the FastMPSRotaryEmbedding module with precomputed rotary embedding parameters.
+        
+        Supports initialization via explicit parameters or a configuration object. Precomputes inverse frequencies and caches cosine and sine embeddings for all positions up to the maximum sequence length on CPU for efficient rotary positional encoding on MPS devices.
+        """
         super().__init__()
         
         # Handle both old-style (dim, max_position_embeddings, base) and new-style (config) initialization
@@ -42,7 +47,11 @@ class FastMPSRotaryEmbedding(nn.Module):
         self._precompute_all_positions()
     
     def _precompute_all_positions(self):
-        """Pre-compute cos/sin for all possible positions."""
+        """
+        Precompute and cache cosine and sine rotary embeddings for all positions up to the maximum sequence length.
+        
+        This method generates and stores the cosine and sine values for rotary positional encoding as non-persistent buffers, enabling efficient retrieval during model inference.
+        """
         # Create position indices
         position_ids = torch.arange(self.max_position_embeddings, dtype=torch.float32).unsqueeze(0)
         
@@ -61,6 +70,18 @@ class FastMPSRotaryEmbedding(nn.Module):
     
     @torch.no_grad()
     def forward(self, x, position_ids):
+        """
+        Returns precomputed cosine and sine rotary embeddings for the given input tensor and position IDs.
+        
+        If `position_ids` are provided, gathers the corresponding cosine and sine embeddings for each batch element; otherwise, uses sequential positions up to the input sequence length. The returned embeddings are moved to match the device and dtype of the input tensor.
+        
+        Parameters:
+            x (torch.Tensor): Input tensor whose shape determines batch size and sequence length.
+            position_ids (torch.Tensor or None): Optional tensor specifying position indices for each batch element.
+        
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Cosine and sine embedding tensors of shape [batch_size, seq_len, dim].
+        """
         self._call_count += 1
         if self._call_count % 100 == 0:
             logger.debug(f"FastMPSRotaryEmbedding called {self._call_count} times")
@@ -114,7 +135,10 @@ class FastMPSRotaryEmbedding(nn.Module):
 
 def monkey_patch_llama_for_mps():
     """
-    Monkey-patch the transformers library to use our fast MPS implementation.
+    Replaces the Hugging Face transformers LlamaRotaryEmbedding class with FastMPSRotaryEmbedding for improved MPS performance.
+    
+    Returns:
+        bool: True if the patch was applied successfully or was already present, False if patching failed.
     """
     try:
         from transformers.models.llama import modeling_llama
@@ -142,7 +166,12 @@ def monkey_patch_llama_for_mps():
 
 def optimize_chatterbox_for_fast_mps(chatterbox_model):
     """
-    Apply fast MPS optimizations to Chatterbox model.
+    Optimizes a Chatterbox TTS model for fast inference on Apple MPS devices by replacing rotary embeddings and configuring backend settings.
+    
+    This function monkey-patches the Hugging Face transformers library to use a fast MPS-optimized rotary embedding implementation, replaces all rotary embedding modules in the model's transformer with the optimized version, disables PyTorch autocasting, enables fast matrix multiplication for MPS if available, and ensures key model components are set to evaluation mode.
+    
+    Returns:
+        The optimized Chatterbox model with fast MPS rotary embeddings and backend settings applied.
     """
     logger.info("⚡ Applying fast MPS optimizations...")
     

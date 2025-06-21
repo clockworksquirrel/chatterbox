@@ -7,7 +7,14 @@ original_torch_load = torch.load
 
 def patched_torch_load(f, map_location=None, **kwargs):
     """
-    Patched torch.load that automatically maps CUDA tensors to CPU/MPS
+    Loads a PyTorch object from a file, defaulting to CPU device mapping if no device is specified.
+    
+    Parameters:
+        f: The file-like object or file path to load the object from.
+        map_location: Optional device mapping for loaded tensors. Defaults to 'cpu' if not provided.
+    
+    Returns:
+        The deserialized PyTorch object with tensors mapped to the specified device.
     """
     if map_location is None:
         # Default to CPU for compatibility
