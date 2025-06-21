@@ -135,7 +135,7 @@ The entire optimization was achieved through natural language descriptions of th
 
 ## 📝 Recent Updates
 
-### December 21, 2024
+### June 21, 2025
 - Added adjustable generation steps slider (100-2000 range)
 - Updated TTS interface with steps parameter
 - Fixed voice conversion app to use correct API
@@ -146,6 +146,19 @@ The entire optimization was achieved through natural language descriptions of th
   - Removed unused imports and unnecessary f-strings
   - Improved code structure with GenerationConfig dataclass
   - Enhanced error handling and resource management
+- **Unlimited Text Generation Support**: Successfully implemented unlimited text input capability with automatic chunking
+  - Tested on M2 MacBook Pro Max with impressive results:
+    - Input text: 12,506 characters
+    - Audio duration: 850.80 seconds (14.18 minutes)
+    - Generation time: 1887.03 seconds (31.45 minutes)
+    - Real-time factor (RTF): 2.22x
+    - Sample rate: 24,000 Hz
+  - The system can now handle texts of any length, from short sentences to entire books
+- **Voice Accuracy Note**: Currently working on improving voice cloning accuracy with reference audio files
+  - The current TTS implementation has limitations with accent reproduction
+  - Example: Northern English accents from ElevenLabs voices are rendered with Australian characteristics
+  - We are monitoring Chatterbox development for improvements in this area
+  - Will update our implementation as soon as better voice cloning capabilities become available
 
 ## 📄 License
 

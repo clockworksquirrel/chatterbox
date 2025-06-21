@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass
 from optimum.bettertransformer import BetterTransformer
 from mps_fast_patch import optimize_chatterbox_for_fast_mps
+import traceback
 
 # Setup logging
 logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -61,17 +62,26 @@ def split_text_into_chunks(text: str, max_chars: int = 250) -> List[str]:
     """
     Splits input text into chunks not exceeding a specified character limit, prioritizing sentence boundaries.
     
-    If a sentence exceeds the maximum character limit, it is further split by commas, and then by spaces as a last resort. Returns a list of non-empty text chunks suitable for sequential processing.
+    Handles texts of any length efficiently by processing incrementally. If a sentence exceeds the maximum 
+    character limit, it is further split by commas, and then by spaces as a last resort. Returns a list 
+    of non-empty text chunks suitable for sequential processing.
      
     Parameters:
-        text (str): The input text to be split.
+        text (str): The input text to be split. No length limit.
         max_chars (int): Maximum number of characters allowed per chunk. Defaults to 250.
     
     Returns:
         List[str]: List of text chunks, each not exceeding the specified character limit.
     """
+    if not text or not text.strip():
+        return []
+        
     if len(text) <= max_chars:
         return [text]
+    
+    # For very long texts, log progress
+    if len(text) > 10000:
+        logger.info(f"   Splitting {len(text):,} characters into chunks of {max_chars} chars...")
     
     # Split by sentences first (period, exclamation, question mark)
     sentences = re.split(r'(?<=[.!?])\s+', text)
@@ -79,7 +89,11 @@ def split_text_into_chunks(text: str, max_chars: int = 250) -> List[str]:
     chunks = []
     current_chunk = ""
     
-    for sentence in sentences:
+    for i, sentence in enumerate(sentences):
+        # Log progress for very long texts
+        if len(sentences) > 100 and i % 100 == 0:
+            logger.info(f"   Processing sentence {i}/{len(sentences)}...")
+            
         # If single sentence is too long, split by commas or spaces
         if len(sentence) > max_chars:
             if current_chunk:
@@ -121,7 +135,13 @@ def split_text_into_chunks(text: str, max_chars: int = 250) -> List[str]:
     if current_chunk:
         chunks.append(current_chunk.strip())
     
-    return [chunk for chunk in chunks if chunk.strip()]
+    # Filter out empty chunks and log final count
+    chunks = [chunk for chunk in chunks if chunk.strip()]
+    
+    if len(text) > 10000:
+        logger.info(f"   Split complete: {len(chunks)} chunks created")
+    
+    return chunks
 
 
 def warmup_model(model):
@@ -272,103 +292,111 @@ def load_and_prepare_model():
     return model
 
 
-def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw, min_p, top_p, repetition_penalty, steps):
-    """
-    Generates speech audio from input text using the global ChatterboxTTS model.
+def generate(text, ref_wav, exaggeration, cfg_weight, steps, seed_num, temp, min_p, top_p, repetition_penalty, enable_chunking, chunk_size):
+    """Generate audio with improved device management and performance"""
+    global GLOBAL_MODEL
     
-    Splits the input text into manageable chunks, synthesizes audio for each chunk with the specified parameters, and concatenates the results with brief silences if needed. Supports optional reference audio for voice conditioning and allows control over generation parameters such as exaggeration, temperature, CFG weight, and sampling strategies.
-    
-    Parameters:
-        text (str): The input text to synthesize.
-        audio_prompt_path (str): Path to a reference audio file for voice conditioning, or None to use the default voice.
-        exaggeration (float): Controls the expressiveness of the generated speech.
-        temperature (float): Sampling temperature for generation randomness.
-        seed_num (int): Random seed for reproducibility; 0 disables seeding.
-        cfgw (float): Classifier-free guidance weight.
-        min_p (float): Minimum probability threshold for nucleus sampling.
-        top_p (float): Top-p (nucleus) sampling parameter.
-        repetition_penalty (float): Penalty to discourage repetition in output.
-        steps (int): Maximum number of generation steps.
-    
-    Returns:
-        tuple: (sample_rate, audio), where sample_rate is the output audio's sample rate (int), and audio is a NumPy array containing the generated waveform.
-    """
-    # Create config object from parameters
-    config = GenerationConfig(
-        temperature=temperature,
-        cfg_weight=cfgw,
-        min_p=min_p,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-        steps=steps,
-        exaggeration=exaggeration
-    )
-    
-    if GLOBAL_MODEL is None:
-        raise RuntimeError("Model not initialized!")
-
-    if seed_num != 0:
-        set_seed(int(seed_num))
-
-    # Verify model is still on the correct device
-    if DEVICE != "cpu" and GLOBAL_MODEL.device != DEVICE:
-        logger.warning(f"Model device mismatch! Expected {DEVICE}, got {GLOBAL_MODEL.device}")
-        GLOBAL_MODEL.device = DEVICE
-
-    logger.info(f"🎤 Generating audio for text: '{text[:50]}...'")
-    if audio_prompt_path:
-        logger.info(f"   Using reference audio: {audio_prompt_path}")
-    else:
-        logger.info("   Using default voice")
-    
-    logger.info(f"   Parameters: temp={config.temperature}, cfg={config.cfg_weight}, exaggeration={config.exaggeration}, steps={config.steps}")
-    start_time = time.time()
-
-    text_chunks = split_text_into_chunks(text)
-    logger.info(f"   Processing {len(text_chunks)} text chunk(s)")
-
-    generated_wavs = []
-    for i, chunk in enumerate(text_chunks):
-        logger.info(f"   Chunk {i+1}/{len(text_chunks)}: '{chunk[:50]}...'")
-        chunk_start = time.time()
+    try:
+        # Input validation
+        if not text or not text.strip():
+            logger.error("❌ No text provided")
+            return None
+            
+        # Clean the text
+        text = text.strip()
         
-        wav = GLOBAL_MODEL.generate(
-            chunk,
-            audio_prompt_path=audio_prompt_path,
-            exaggeration=config.exaggeration,
-            temperature=config.temperature,
-            cfg_weight=config.cfg_weight,
-            min_p=config.min_p,
-            top_p=config.top_p,
-            repetition_penalty=config.repetition_penalty,
-            steps=config.steps,
-        )
+        # Log generation details
+        logger.info(f"🎤 Generating audio for text: '{text[:50]}...' ({len(text):,} characters)")
+        if ref_wav:
+            logger.info(f"   Using reference audio: {ref_wav}")
+        logger.info(f"   Parameters: temp={temp}, cfg={cfg_weight}, exaggeration={exaggeration}, max_steps={steps}")
         
-        chunk_time = time.time() - chunk_start
-        chunk_duration = wav.shape[-1] / GLOBAL_MODEL.sr
-        logger.info(f"   ✓ Generated {chunk_duration:.2f}s in {chunk_time:.2f}s (RTF: {chunk_time/chunk_duration:.2f})")
-        generated_wavs.append(wav)
-
-    # Concatenate chunks with silence
-    if len(generated_wavs) > 1:
-        silence_samples = int(0.3 * GLOBAL_MODEL.sr)
-        silence = torch.zeros(1, silence_samples, dtype=generated_wavs[0].dtype, device=generated_wavs[0].device)
-        final_wav = torch.cat([torch.cat([wav, silence], dim=1) for wav in generated_wavs[:-1]] + [generated_wavs[-1]], dim=1)
-    else:
-        final_wav = generated_wavs[0]
-
-    end_time = time.time()
-    total_duration = final_wav.shape[-1] / GLOBAL_MODEL.sr
-    total_time = end_time - start_time
-    rtf = total_time / total_duration
-    
-    logger.info(f"✅ Total: Generated {total_duration:.2f}s of audio in {total_time:.2f}s (RTF: {rtf:.2f})")
-    
-    # Check if we meet the performance target
-    if total_duration >= 60 and total_time < 20:
-        logger.info("🎯 Performance target achieved: >1 minute of audio in <20 seconds!")
-    
-    return (GLOBAL_MODEL.sr, final_wav.squeeze(0).cpu().numpy())
+        # Split text into chunks if enabled and text is longer than chunk size
+        if enable_chunking and len(text) > chunk_size:
+            chunks = split_text_into_chunks(text, max_chars=chunk_size)
+            logger.info(f"   Processing {len(chunks)} text chunk(s)")
+            
+            # For very long texts, warn about processing time
+            if len(chunks) > 20:
+                logger.info(f"   ⚠️  Large text: {len(chunks)} chunks will be processed. This may take several minutes...")
+        else:
+            chunks = [text]
+            if len(text) > 1000:
+                logger.info(f"   Processing single chunk of {len(text):,} characters (chunking disabled)")
+        
+        # Process chunks
+        audio_chunks = []
+        total_start_time = time.time()
+        
+        for i, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                logger.info(f"   Chunk {i+1}/{len(chunks)}: '{chunk[:50]}...' ({len(chunk)} chars)")
+            
+            chunk_start_time = time.time()
+            
+            # Set seed if provided
+            if seed_num != 0:
+                set_seed(int(seed_num))
+            
+            # Generate audio for this chunk
+            result = GLOBAL_MODEL.generate(
+                text=chunk,
+                audio_prompt_path=ref_wav,
+                exaggeration=exaggeration,
+                temperature=temp,
+                cfg_weight=cfg_weight,
+                min_p=min_p,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                steps=steps
+            )
+            
+            if result is None:
+                logger.error(f"   ❌ Failed to generate chunk {i+1}")
+                continue
+            
+            # The model returns just the audio tensor, not (sr, audio)
+            audio = result.squeeze(0).cpu().numpy()
+            audio_chunks.append(audio)
+            
+            # Log chunk timing
+            chunk_time = time.time() - chunk_start_time
+            chunk_duration = len(audio) / GLOBAL_MODEL.sr
+            chunk_rtf = chunk_time / chunk_duration
+            
+            if len(chunks) > 1:
+                logger.info(f"   ✓ Generated {chunk_duration:.2f}s in {chunk_time:.2f}s (RTF: {chunk_rtf:.2f})")
+            
+            # Progress update for very long texts
+            if len(chunks) > 20 and (i + 1) % 10 == 0:
+                elapsed = time.time() - total_start_time
+                avg_per_chunk = elapsed / (i + 1)
+                remaining = avg_per_chunk * (len(chunks) - i - 1)
+                logger.info(f"   Progress: {i+1}/{len(chunks)} chunks complete. Est. time remaining: {remaining:.1f}s")
+        
+        if not audio_chunks:
+            logger.error("❌ No audio chunks generated")
+            return None
+        
+        # Combine all audio chunks
+        if len(audio_chunks) > 1:
+            combined_audio = np.concatenate(audio_chunks)
+        else:
+            combined_audio = audio_chunks[0]
+        
+        # Log final timing
+        total_time = time.time() - total_start_time
+        total_duration = len(combined_audio) / GLOBAL_MODEL.sr
+        total_rtf = total_time / total_duration
+        
+        logger.info(f"✅ Total: Generated {total_duration:.2f}s of audio in {total_time:.2f}s (RTF: {total_rtf:.2f})")
+        
+        return GLOBAL_MODEL.sr, combined_audio
+        
+    except Exception as e:
+        logger.error(f"❌ Error during generation: {str(e)}")
+        logger.error(traceback.format_exc())
+        return None
 
 
 # Initialize model before creating the interface
@@ -388,8 +416,10 @@ with gr.Blocks() as demo:
         with gr.Column():
             text = gr.Textbox(
                 value="Now let's make my mum's favourite. So three mars bars into the pan. Then we add the tuna and just stir for a bit, just let the chocolate and fish infuse. A sprinkle of olive oil and some tomato ketchup. Now smell that. Oh boy this is going to be incredible.",
-                label="Text to synthesize",
-                max_lines=5
+                label="Text to synthesize (no character limit)",
+                max_lines=None,
+                lines=10,
+                placeholder="Enter any amount of text here..."
             )
             ref_wav = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference Audio File", value=None)
             exaggeration = gr.Slider(0.25, 2, step=.05, label="Exaggeration (Neutral = 0.5)", value=.5)
@@ -402,27 +432,79 @@ with gr.Blocks() as demo:
                 min_p = gr.Slider(0.00, 1.00, step=0.01, label="min_p", value=0.05)
                 top_p = gr.Slider(0.00, 1.00, step=0.01, label="top_p", value=1.00)
                 repetition_penalty = gr.Slider(1.00, 2.00, step=0.1, label="repetition_penalty", value=1.2)
+                
+                gr.Markdown("### Text Processing")
+                enable_chunking = gr.Checkbox(label="Enable text chunking", value=True, info="Split long texts into smaller chunks for better quality")
+                chunk_size = gr.Slider(100, 10000, step=50, label="Chunk size (characters)", value=250, visible=True)
+                
+                # Toggle chunk size visibility based on checkbox
+                enable_chunking.change(
+                    fn=lambda x: gr.update(visible=x),
+                    inputs=[enable_chunking],
+                    outputs=[chunk_size]
+                )
 
             run_btn = gr.Button("Generate", variant="primary")
 
         with gr.Column():
-            audio_output = gr.Audio(label="Output Audio")
+            gr.Markdown("### 🎵 Generated Audio")
+            gr.Markdown("*Click the download button (⬇️) in the audio player to save the generated audio file*")
+            audio_output = gr.Audio(
+                label="Output Audio",
+                type="numpy",
+                show_download_button=True,
+                format="wav"
+            )
+            
+            # Add generation info display
+            generation_info = gr.Markdown(visible=False)
+
+    def generate_with_info(*args):
+        """Wrapper to add generation info display"""
+        import time
+        # Extract text from args to check length
+        text = args[0]
+        text_length = len(text)
+        
+        start_time = time.time()
+        result = generate(*args)
+        end_time = time.time()
+        
+        if result is not None:
+            sr, audio = result
+            duration = len(audio) / sr
+            generation_time = end_time - start_time
+            rtf = generation_time / duration
+            
+            info_text = f"""✅ **Generation complete!**
+- Input text: {text_length:,} characters
+- Audio duration: {duration:.2f} seconds
+- Generation time: {generation_time:.2f} seconds
+- Real-time factor (RTF): {rtf:.2f}x
+- Sample rate: {sr:,} Hz
+- Click the download button above to save"""
+            
+            return result, gr.update(value=info_text, visible=True)
+        else:
+            return None, gr.update(value="❌ Generation failed", visible=True)
 
     run_btn.click(
-        fn=generate,
+        fn=generate_with_info,
         inputs=[
             text,
             ref_wav,
             exaggeration,
-            temp,
-            seed_num,
             cfg_weight,
+            steps,
+            seed_num,
+            temp,
             min_p,
             top_p,
             repetition_penalty,
-            steps,
+            enable_chunking,
+            chunk_size,
         ],
-        outputs=audio_output,
+        outputs=[audio_output, generation_info],
     )
 
 if __name__ == "__main__":
