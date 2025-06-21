@@ -8,6 +8,7 @@ import re
 from typing import List
 import logging
 import sys
+from dataclasses import dataclass
 from optimum.bettertransformer import BetterTransformer
 from mps_fast_patch import optimize_chatterbox_for_fast_mps
 
@@ -28,6 +29,18 @@ elif torch.cuda.is_available():
 else:
     DEVICE = "cpu"
     logger.info("🚀 No GPU detected, running on CPU only")
+
+
+@dataclass
+class GenerationConfig:
+    """Configuration for audio generation parameters."""
+    temperature: float = 0.8
+    cfg_weight: float = 0.5
+    min_p: float = 0.05
+    top_p: float = 1.0
+    repetition_penalty: float = 1.2
+    steps: int = 1000
+    exaggeration: float = 0.5
 
 
 def set_seed(seed: int):
@@ -280,6 +293,17 @@ def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw,
     Returns:
         tuple: (sample_rate, audio), where sample_rate is the output audio's sample rate (int), and audio is a NumPy array containing the generated waveform.
     """
+    # Create config object from parameters
+    config = GenerationConfig(
+        temperature=temperature,
+        cfg_weight=cfgw,
+        min_p=min_p,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
+        steps=steps,
+        exaggeration=exaggeration
+    )
+    
     if GLOBAL_MODEL is None:
         raise RuntimeError("Model not initialized!")
 
@@ -297,7 +321,7 @@ def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw,
     else:
         logger.info("   Using default voice")
     
-    logger.info(f"   Parameters: temp={temperature}, cfg={cfgw}, exaggeration={exaggeration}, steps={steps}")
+    logger.info(f"   Parameters: temp={config.temperature}, cfg={config.cfg_weight}, exaggeration={config.exaggeration}, steps={config.steps}")
     start_time = time.time()
 
     text_chunks = split_text_into_chunks(text)
@@ -311,13 +335,13 @@ def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw,
         wav = GLOBAL_MODEL.generate(
             chunk,
             audio_prompt_path=audio_prompt_path,
-            exaggeration=exaggeration,
-            temperature=temperature,
-            cfg_weight=cfgw,
-            min_p=min_p,
-            top_p=top_p,
-            repetition_penalty=repetition_penalty,
-            steps=steps,
+            exaggeration=config.exaggeration,
+            temperature=config.temperature,
+            cfg_weight=config.cfg_weight,
+            min_p=config.min_p,
+            top_p=config.top_p,
+            repetition_penalty=config.repetition_penalty,
+            steps=config.steps,
         )
         
         chunk_time = time.time() - chunk_start

@@ -5,8 +5,6 @@ Fast MPS optimization for Chatterbox TTS that pre-computes rotary embeddings.
 import torch
 import torch.nn as nn
 import logging
-import math
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 

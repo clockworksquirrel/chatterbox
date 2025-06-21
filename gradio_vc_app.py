@@ -49,6 +49,7 @@ def warmup_model(model):
         bool: True if the warm-up succeeds and valid audio is generated, False otherwise.
     """
     logger.info("🔥 Starting model warm-up...")
+    tmp_path = None
     try:
         start_time = time.time()
         
@@ -67,10 +68,6 @@ def warmup_model(model):
         # Run voice conversion
         result = model.generate(tmp_path, target_voice_path=tmp_path)
         
-        # Clean up
-        import os
-        os.unlink(tmp_path)
-        
         if result is None or result.shape[-1] == 0:
             logger.error("❌ Warm-up failed: No audio generated")
             return False
@@ -84,6 +81,14 @@ def warmup_model(model):
     except Exception as e:
         logger.error(f"❌ Model warm-up failed: {e}", exc_info=True)
         return False
+    finally:
+        # Clean up temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            import os
+            try:
+                os.unlink(tmp_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file {tmp_path}: {e}")
 
 
 def transfer_model_to_gpu(model, device):
@@ -204,7 +209,7 @@ def convert(src_wav_path, ref_wav_path, seed_num):
     if seed_num != 0:
         set_seed(int(seed_num))
 
-    logger.info(f"🎤 Converting voice...")
+    logger.info("🎤 Converting voice...")
     logger.info(f"   Source: {src_wav_path}")
     logger.info(f"   Reference: {ref_wav_path}")
     start_time = time.time()
@@ -223,9 +228,9 @@ def convert(src_wav_path, ref_wav_path, seed_num):
         logger.info(f"✅ Generated {duration:.2f}s of audio in {total_time:.2f}s (RTF: {rtf:.2f})")
         # Return in the expected format (sample_rate, audio_array)
         return (GLOBAL_MODEL.sr, result.squeeze(0).cpu().numpy())
-    else:
-        logger.error("❌ Voice conversion failed")
-        return None
+    
+    logger.error("❌ Voice conversion failed")
+    return None
 
 
 # Initialize model before creating the interface

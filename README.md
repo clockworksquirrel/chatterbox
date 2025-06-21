@@ -45,8 +45,8 @@ The key innovation is the `mps_fast_patch.py` module that addresses PyTorch MPS 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/chatterbox-macos-optimize.git
-cd chatterbox-macos-optimize
+git clone https://github.com/clockworksquirrel/chatterbox.git
+cd chatterbox
 
 # Create virtual environment
 python -m venv .venv
@@ -140,6 +140,12 @@ The entire optimization was achieved through natural language descriptions of th
 - Updated TTS interface with steps parameter
 - Fixed voice conversion app to use correct API
 - Improved documentation and error handling
+- **Bug fixes and optimizations:**
+  - Added input validation for audio tensor inputs in voice conversion
+  - Fixed temporary file cleanup with proper try-finally blocks
+  - Removed unused imports and unnecessary f-strings
+  - Improved code structure with GenerationConfig dataclass
+  - Enhanced error handling and resource management
 
 ## 📄 License
 
