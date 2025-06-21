@@ -60,6 +60,15 @@ class ChatterboxVC:
 
     @classmethod
     def from_pretrained(cls, device) -> 'ChatterboxVC':
+        """
+        Instantiate a ChatterboxVC model by downloading pretrained weights and reference conditionals from the Hugging Face hub.
+        
+        Parameters:
+            device (str): The device identifier (e.g., 'cpu', 'cuda', 'mps') on which to load the model.
+        
+        Returns:
+            ChatterboxVC: An instance of the voice conversion model initialized with pretrained parameters.
+        """
         for fpath in ["s3gen.safetensors", "conds.pt"]:
             local_path = hf_hub_download(repo_id=REPO_ID, filename=fpath)
 
@@ -77,6 +86,16 @@ class ChatterboxVC:
         audio,
         target_voice_path=None,
     ):
+        """
+        Convert input audio to the target voice using the pretrained speech generator and reference embeddings.
+        
+        Parameters:
+            audio (str or torch.Tensor): Input audio as a file path or a waveform tensor.
+            target_voice_path (str, optional): Path to a WAV file for the target voice reference. If not provided, precomputed reference embeddings must be set.
+        
+        Returns:
+            torch.Tensor: The generated waveform with the target voice, watermarked and returned as a tensor with a batch dimension.
+        """
         if target_voice_path:
             self.set_target_voice(target_voice_path)
         else:

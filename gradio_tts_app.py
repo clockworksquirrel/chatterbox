@@ -31,6 +31,12 @@ else:
 
 
 def set_seed(seed: int):
+    """
+    Set the random seed for PyTorch, CUDA, Python, and NumPy to ensure reproducible results across runs.
+    
+    Parameters:
+        seed (int): The seed value to use for all random number generators.
+    """
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -40,7 +46,16 @@ def set_seed(seed: int):
 
 def split_text_into_chunks(text: str, max_chars: int = 250) -> List[str]:
     """
-    Split text into chunks at sentence boundaries, respecting max character limit.
+    Splits input text into chunks not exceeding a specified character limit, prioritizing sentence boundaries.
+    
+    If a sentence exceeds the maximum character limit, it is further split by commas, and then by spaces as a last resort. Returns a list of non-empty text chunks suitable for sequential processing.
+     
+    Parameters:
+        text (str): The input text to be split.
+        max_chars (int): Maximum number of characters allowed per chunk. Defaults to 250.
+    
+    Returns:
+        List[str]: List of text chunks, each not exceeding the specified character limit.
     """
     if len(text) <= max_chars:
         return [text]
@@ -98,8 +113,10 @@ def split_text_into_chunks(text: str, max_chars: int = 250) -> List[str]:
 
 def warmup_model(model):
     """
-    Warm up the model with sample generation to ensure all kernels are compiled.
-    Returns True if successful, False otherwise.
+    Performs a sample audio generation to precompile model kernels and verify readiness.
+    
+    Returns:
+        bool: True if the model successfully generates non-empty audio, False otherwise.
     """
     logger.info("🔥 Starting model warm-up...")
     try:
@@ -136,7 +153,15 @@ def warmup_model(model):
 
 def transfer_model_to_gpu(model, device):
     """
-    Transfers all components of the ChatterboxTTS model to the specified GPU device.
+    Transfers all components of a ChatterboxTTS model to the specified GPU or MPS device.
+    
+    Moves the model's core modules and conditionals to the target device, applies device-specific optimizations if needed, and ensures transfer completion. Raises an exception if the transfer fails.
+    
+    Parameters:
+        device (str): Target device identifier, such as 'cuda' or 'mps'.
+    
+    Returns:
+        model: The ChatterboxTTS model with all components moved to the specified device.
     """
     logger.info(f"📤 Transferring model components from CPU to {device}...")
     start_time = time.time()
@@ -183,7 +208,13 @@ def transfer_model_to_gpu(model, device):
 
 def load_and_prepare_model():
     """
-    Load model on CPU, transfer to GPU, apply optimizations, and warm up.
+    Loads the ChatterboxTTS model, transfers it to the appropriate device, applies optimizations, and performs a warm-up to ensure readiness.
+    
+    Returns:
+        model (ChatterboxTTS): The fully initialized and optimized TTS model ready for inference.
+    
+    Raises:
+        RuntimeError: If the model fails to warm up successfully.
     """
     logger.info("=" * 60)
     logger.info("🚀 INITIALIZING CHATTERBOX TTS MODEL")
@@ -230,7 +261,23 @@ def load_and_prepare_model():
 
 def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw, min_p, top_p, repetition_penalty):
     """
-    Generate speech from text using the global model.
+    Generates speech audio from input text using the global ChatterboxTTS model.
+    
+    Splits the input text into manageable chunks, synthesizes audio for each chunk with the specified parameters, and concatenates the results with brief silences if needed. Supports optional reference audio for voice conditioning and allows control over generation parameters such as exaggeration, temperature, CFG weight, and sampling strategies.
+    
+    Parameters:
+        text (str): The input text to synthesize.
+        audio_prompt_path (str): Path to a reference audio file for voice conditioning, or None to use the default voice.
+        exaggeration (float): Controls the expressiveness of the generated speech.
+        temperature (float): Sampling temperature for generation randomness.
+        seed_num (int): Random seed for reproducibility; 0 disables seeding.
+        cfgw (float): Classifier-free guidance weight.
+        min_p (float): Minimum probability threshold for nucleus sampling.
+        top_p (float): Top-p (nucleus) sampling parameter.
+        repetition_penalty (float): Penalty to discourage repetition in output.
+    
+    Returns:
+        tuple: (sample_rate, audio), where sample_rate is the output audio's sample rate (int), and audio is a NumPy array containing the generated waveform.
     """
     if GLOBAL_MODEL is None:
         raise RuntimeError("Model not initialized!")

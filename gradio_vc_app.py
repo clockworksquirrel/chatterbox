@@ -28,6 +28,12 @@ else:
 
 
 def set_seed(seed: int):
+    """
+    Set the random seed for PyTorch, CUDA, Python's random module, and NumPy to ensure reproducible results.
+    
+    Parameters:
+        seed (int): The seed value to use for all random number generators.
+    """
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -37,8 +43,10 @@ def set_seed(seed: int):
 
 def warmup_model(model):
     """
-    Warm up the model with a sample audio file to ensure all kernels are compiled.
-    Returns True if successful, False otherwise.
+    Performs a warm-up pass on the model by converting a dummy silent audio file to ensure all kernels are compiled and the model is ready for inference.
+    
+    Returns:
+        bool: True if the warm-up succeeds and valid audio is generated, False otherwise.
     """
     logger.info("🔥 Starting model warm-up...")
     try:
@@ -80,7 +88,17 @@ def warmup_model(model):
 
 def transfer_model_to_gpu(model, device):
     """
-    Transfers all components of the ChatterboxVC model to the specified GPU device.
+    Move all submodules of a ChatterboxVC model instance to the specified GPU device.
+    
+    Parameters:
+        model: The ChatterboxVC model instance to transfer.
+        device (str): Target device identifier ('cuda' or 'mps').
+    
+    Returns:
+        The model with all components moved to the specified device.
+    
+    Raises:
+        Exception: If any component fails to transfer to the target device.
     """
     logger.info(f"📤 Transferring model components from CPU to {device}...")
     start_time = time.time()
@@ -117,7 +135,12 @@ def transfer_model_to_gpu(model, device):
 
 def load_and_prepare_model():
     """
-    Load model on CPU, transfer to GPU, apply optimizations, and warm up.
+    Initializes and prepares the ChatterboxVC model for inference.
+    
+    Loads the model on CPU, transfers it to GPU if available, applies BetterTransformer optimizations to key components, and performs a warm-up conversion to ensure readiness. Raises a RuntimeError if the warm-up fails.
+    
+    Returns:
+        model: The fully initialized and ready-to-use ChatterboxVC model instance.
     """
     logger.info("=" * 60)
     logger.info("🚀 INITIALIZING CHATTERBOX VC MODEL")
@@ -164,7 +187,20 @@ def load_and_prepare_model():
 
 def convert(src_wav_path, ref_wav_path, temperature, seed_num, cfgw, min_p, top_p, repetition_penalty):
     """
-    Convert voice using the global model.
+    Performs voice conversion using the globally loaded ChatterboxVC model.
+    
+    Parameters:
+        src_wav_path (str): Path to the source audio file to be converted.
+        ref_wav_path (str): Path to the reference audio file providing the target voice characteristics.
+        temperature (float): Sampling temperature for generation.
+        seed_num (int): Random seed for reproducibility; if 0, no seed is set.
+        cfgw (float): Classifier-free guidance weight.
+        min_p (float): Minimum probability threshold for nucleus sampling.
+        top_p (float): Top-p (nucleus) sampling parameter.
+        repetition_penalty (float): Penalty factor to discourage repetition.
+    
+    Returns:
+        tuple: The result of the voice conversion, typically containing the sample rate and the generated audio array.
     """
     if GLOBAL_MODEL is None:
         raise RuntimeError("Model not initialized!")
