@@ -259,7 +259,7 @@ def load_and_prepare_model():
     return model
 
 
-def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw, min_p, top_p, repetition_penalty):
+def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw, min_p, top_p, repetition_penalty, steps):
     """
     Generates speech audio from input text using the global ChatterboxTTS model.
     
@@ -275,6 +275,7 @@ def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw,
         min_p (float): Minimum probability threshold for nucleus sampling.
         top_p (float): Top-p (nucleus) sampling parameter.
         repetition_penalty (float): Penalty to discourage repetition in output.
+        steps (int): Maximum number of generation steps.
     
     Returns:
         tuple: (sample_rate, audio), where sample_rate is the output audio's sample rate (int), and audio is a NumPy array containing the generated waveform.
@@ -296,7 +297,7 @@ def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw,
     else:
         logger.info("   Using default voice")
     
-    logger.info(f"   Parameters: temp={temperature}, cfg={cfgw}, exaggeration={exaggeration}")
+    logger.info(f"   Parameters: temp={temperature}, cfg={cfgw}, exaggeration={exaggeration}, steps={steps}")
     start_time = time.time()
 
     text_chunks = split_text_into_chunks(text)
@@ -316,6 +317,7 @@ def generate(text, audio_prompt_path, exaggeration, temperature, seed_num, cfgw,
             min_p=min_p,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            steps=steps,
         )
         
         chunk_time = time.time() - chunk_start
@@ -368,6 +370,7 @@ with gr.Blocks() as demo:
             ref_wav = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference Audio File", value=None)
             exaggeration = gr.Slider(0.25, 2, step=.05, label="Exaggeration (Neutral = 0.5)", value=.5)
             cfg_weight = gr.Slider(0.0, 1, step=.05, label="CFG/Pace", value=0.5)
+            steps = gr.Slider(100, 2000, step=50, label="Generation Steps", value=1000)
 
             with gr.Accordion("More options", open=False):
                 seed_num = gr.Number(value=0, label="Random seed (0 for random)")
@@ -393,6 +396,7 @@ with gr.Blocks() as demo:
             min_p,
             top_p,
             repetition_penalty,
+            steps,
         ],
         outputs=audio_output,
     )

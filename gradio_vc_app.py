@@ -65,17 +65,17 @@ def warmup_model(model):
             tmp_path = tmp_file.name
         
         # Run voice conversion
-        result = model.convert(tmp_path, tmp_path, temperature=0.7, cfg_weight=0.5)
+        result = model.generate(tmp_path, target_voice_path=tmp_path)
         
         # Clean up
         import os
         os.unlink(tmp_path)
         
-        if result is None or result[1].shape[-1] == 0:
+        if result is None or result.shape[-1] == 0:
             logger.error("❌ Warm-up failed: No audio generated")
             return False
             
-        duration = result[1].shape[-1] / result[0]
+        duration = result.shape[-1] / model.sr
         end_time = time.time()
         logger.info(f"✅ Model warm-up completed in {end_time - start_time:.2f} seconds")
         logger.info(f"   Generated {duration:.2f} seconds of audio")
@@ -104,18 +104,20 @@ def transfer_model_to_gpu(model, device):
     start_time = time.time()
     
     try:
-        # Transfer each component
-        logger.info("   - Transferring T3 model...")
-        model.t3 = model.t3.to(device)
-        
+        # Transfer S3Gen component
         logger.info("   - Transferring S3Gen model...")
         model.s3gen = model.s3gen.to(device)
         
-        logger.info("   - Transferring Voice Encoder...")
-        model.ve = model.ve.to(device)
-        
         # Update device attribute
         model.device = device
+        
+        # Transfer ref_dict if it exists
+        if model.ref_dict is not None:
+            logger.info("   - Transferring reference embeddings...")
+            model.ref_dict = {
+                k: v.to(device) if torch.is_tensor(v) else v
+                for k, v in model.ref_dict.items()
+            }
         
         # Synchronize to ensure transfers complete
         if device == 'cuda':
@@ -163,7 +165,6 @@ def load_and_prepare_model():
     logger.info("⚡ Step 3: Applying BetterTransformer optimization...")
     try:
         opt_start = time.time()
-        model.t3 = BetterTransformer.transform(model.t3)
         model.s3gen = BetterTransformer.transform(model.s3gen)
         logger.info(f"✅ BetterTransformer applied in {time.time() - opt_start:.2f} seconds")
     except Exception as e:
@@ -185,19 +186,14 @@ def load_and_prepare_model():
     return model
 
 
-def convert(src_wav_path, ref_wav_path, temperature, seed_num, cfgw, min_p, top_p, repetition_penalty):
+def convert(src_wav_path, ref_wav_path, seed_num):
     """
     Performs voice conversion using the globally loaded ChatterboxVC model.
     
     Parameters:
         src_wav_path (str): Path to the source audio file to be converted.
         ref_wav_path (str): Path to the reference audio file providing the target voice characteristics.
-        temperature (float): Sampling temperature for generation.
         seed_num (int): Random seed for reproducibility; if 0, no seed is set.
-        cfgw (float): Classifier-free guidance weight.
-        min_p (float): Minimum probability threshold for nucleus sampling.
-        top_p (float): Top-p (nucleus) sampling parameter.
-        repetition_penalty (float): Penalty factor to discourage repetition.
     
     Returns:
         tuple: The result of the voice conversion, typically containing the sample rate and the generated audio array.
@@ -213,26 +209,23 @@ def convert(src_wav_path, ref_wav_path, temperature, seed_num, cfgw, min_p, top_
     logger.info(f"   Reference: {ref_wav_path}")
     start_time = time.time()
 
-    result = GLOBAL_MODEL.convert(
+    # ChatterboxVC only uses the audio and target_voice_path
+    result = GLOBAL_MODEL.generate(
         src_wav_path,
-        ref_wav_path,
-        temperature=temperature,
-        cfg_weight=cfgw,
-        min_p=min_p,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
+        target_voice_path=ref_wav_path,
     )
 
     end_time = time.time()
-    if result:
-        duration = result[1].shape[-1] / result[0]
+    if result is not None:
+        duration = result.shape[-1] / GLOBAL_MODEL.sr
         total_time = end_time - start_time
         rtf = total_time / duration
         logger.info(f"✅ Generated {duration:.2f}s of audio in {total_time:.2f}s (RTF: {rtf:.2f})")
+        # Return in the expected format (sample_rate, audio_array)
+        return (GLOBAL_MODEL.sr, result.squeeze(0).cpu().numpy())
     else:
         logger.error("❌ Voice conversion failed")
-        
-    return result
+        return None
 
 
 # Initialize model before creating the interface
@@ -247,19 +240,13 @@ except Exception as e:
 with gr.Blocks() as demo:
     gr.Markdown("# 🎙️ Chatterbox Voice Conversion")
     gr.Markdown("Model loaded and warmed up. Ready for fast inference!")
+    gr.Markdown("**Note:** Voice Conversion only uses source and reference audio. Generation parameters like steps, temperature, etc. are not applicable for audio-to-audio conversion.")
     
     with gr.Row():
         with gr.Column():
             src_wav = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Source Audio File")
             ref_wav = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference Audio File")
-            cfg_weight = gr.Slider(0.0, 1, step=.05, label="CFG", value=0.5)
-
-            with gr.Accordion("More options", open=False):
-                seed_num = gr.Number(value=0, label="Random seed (0 for random)")
-                temp = gr.Slider(0.05, 5, step=.05, label="temperature", value=.7)
-                min_p = gr.Slider(0.00, 1.00, step=0.01, label="min_p", value=0.00)
-                top_p = gr.Slider(0.00, 1.00, step=0.01, label="top_p", value=0.80)
-                repetition_penalty = gr.Slider(1.00, 2.00, step=0.1, label="repetition_penalty", value=1.2)
+            seed_num = gr.Number(value=0, label="Random seed (0 for random)")
 
             run_btn = gr.Button("Convert", variant="primary")
 
@@ -271,12 +258,7 @@ with gr.Blocks() as demo:
         inputs=[
             src_wav,
             ref_wav,
-            temp,
             seed_num,
-            cfg_weight,
-            min_p,
-            top_p,
-            repetition_penalty,
         ],
         outputs=audio_output,
     )
