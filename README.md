@@ -135,7 +135,7 @@ The entire optimization was achieved through natural language descriptions of th
 
 ## 📝 Recent Updates
 
-### December 21, 2024
+### June 21, 2024
 - Added adjustable generation steps slider (100-2000 range)
 - Updated TTS interface with steps parameter
 - Fixed voice conversion app to use correct API
