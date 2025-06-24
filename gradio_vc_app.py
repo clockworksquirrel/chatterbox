@@ -289,8 +289,8 @@ with gr.Blocks() as demo:
 - Click the download button above to save"""
             
             return result, gr.update(value=info_text, visible=True)
-        else:
-            return None, gr.update(value="❌ Voice conversion failed", visible=True)
+        
+        return None, gr.update(value="❌ Voice conversion failed", visible=True)
 
     run_btn.click(
         fn=convert_with_info,
