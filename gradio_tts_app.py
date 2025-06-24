@@ -358,7 +358,7 @@ def _combine_audio_chunks(audio_chunks: List[np.ndarray]) -> np.ndarray:
     """Combine multiple audio chunks into a single array."""
     if len(audio_chunks) > 1:
         return np.concatenate(audio_chunks)
-    elif audio_chunks:
+    if audio_chunks:
         return audio_chunks[0]
     return np.array([])
 
