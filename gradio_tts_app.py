@@ -44,6 +44,13 @@ class GenerationConfig:
     exaggeration: float = 0.5
 
 
+@dataclass
+class ChunkingConfig:
+    """Configuration for audio chunking parameters."""
+    enable_chunking: bool = True
+    chunk_size: int = 250
+
+
 def set_seed(seed: int):
     """
     Set the random seed for PyTorch, CUDA, Python, and NumPy to ensure reproducible results across runs.
@@ -292,7 +299,71 @@ def load_and_prepare_model():
     return model
 
 
-def generate(text, ref_wav, exaggeration, cfg_weight, steps, seed_num, temp, min_p, top_p, repetition_penalty, enable_chunking, chunk_size):
+def _process_chunks(chunks: List[str], ref_wav: str, generation_config: GenerationConfig, seed_num: int) -> List[np.ndarray]:
+    """Process text chunks and return audio chunks."""
+    global GLOBAL_MODEL
+    audio_chunks = []
+    total_start_time = time.time()
+
+    for i, chunk in enumerate(chunks):
+        if len(chunks) > 1:
+            logger.info(f"   Chunk {i+1}/{len(chunks)}: '{chunk[:50]}...' ({len(chunk)} chars)")
+        
+        chunk_start_time = time.time()
+        
+        # Set seed if provided
+        if seed_num != 0:
+            set_seed(int(seed_num))
+        
+        # Generate audio for this chunk
+        result = GLOBAL_MODEL.generate(
+            text=chunk,
+            audio_prompt_path=ref_wav,
+            exaggeration=generation_config.exaggeration,
+            temperature=generation_config.temperature,
+            cfg_weight=generation_config.cfg_weight,
+            min_p=generation_config.min_p,
+            top_p=generation_config.top_p,
+            repetition_penalty=generation_config.repetition_penalty,
+            steps=generation_config.steps
+        )
+        
+        if result is None:
+            logger.error(f"   ❌ Failed to generate chunk {i+1}")
+            continue
+        
+        # The model returns just the audio tensor, not (sr, audio)
+        audio = result.squeeze(0).cpu().numpy()
+        audio_chunks.append(audio)
+        
+        # Log chunk timing
+        chunk_time = time.time() - chunk_start_time
+        chunk_duration = len(audio) / GLOBAL_MODEL.sr
+        chunk_rtf = chunk_time / chunk_duration
+        
+        if len(chunks) > 1:
+            logger.info(f"   ✓ Generated {chunk_duration:.2f}s in {chunk_time:.2f}s (RTF: {chunk_rtf:.2f})")
+        
+        # Progress update for very long texts
+        if len(chunks) > 20 and (i + 1) % 10 == 0:
+            elapsed = time.time() - total_start_time
+            avg_per_chunk = elapsed / (i + 1)
+            remaining = avg_per_chunk * (len(chunks) - i - 1)
+            logger.info(f"   Progress: {i+1}/{len(chunks)} chunks complete. Est. time remaining: {remaining:.1f}s")
+            
+    return audio_chunks
+
+
+def _combine_audio_chunks(audio_chunks: List[np.ndarray]) -> np.ndarray:
+    """Combine multiple audio chunks into a single array."""
+    if len(audio_chunks) > 1:
+        return np.concatenate(audio_chunks)
+    elif audio_chunks:
+        return audio_chunks[0]
+    return np.array([])
+
+
+def generate(text: str, ref_wav: str, generation_config: GenerationConfig, chunking_config: ChunkingConfig, seed_num: int):
     """Generate audio with improved device management and performance"""
     global GLOBAL_MODEL
     
@@ -309,11 +380,11 @@ def generate(text, ref_wav, exaggeration, cfg_weight, steps, seed_num, temp, min
         logger.info(f"🎤 Generating audio for text: '{text[:50]}...' ({len(text):,} characters)")
         if ref_wav:
             logger.info(f"   Using reference audio: {ref_wav}")
-        logger.info(f"   Parameters: temp={temp}, cfg={cfg_weight}, exaggeration={exaggeration}, max_steps={steps}")
+        logger.info(f"   Parameters: temp={generation_config.temperature}, cfg={generation_config.cfg_weight}, exaggeration={generation_config.exaggeration}, max_steps={generation_config.steps}")
         
         # Split text into chunks if enabled and text is longer than chunk size
-        if enable_chunking and len(text) > chunk_size:
-            chunks = split_text_into_chunks(text, max_chars=chunk_size)
+        if chunking_config.enable_chunking and len(text) > chunking_config.chunk_size:
+            chunks = split_text_into_chunks(text, max_chars=chunking_config.chunk_size)
             logger.info(f"   Processing {len(chunks)} text chunk(s)")
             
             # For very long texts, warn about processing time
@@ -324,73 +395,32 @@ def generate(text, ref_wav, exaggeration, cfg_weight, steps, seed_num, temp, min
             if len(text) > 1000:
                 logger.info(f"   Processing single chunk of {len(text):,} characters (chunking disabled)")
         
-        # Process chunks
-        audio_chunks = []
         total_start_time = time.time()
-        
-        for i, chunk in enumerate(chunks):
-            if len(chunks) > 1:
-                logger.info(f"   Chunk {i+1}/{len(chunks)}: '{chunk[:50]}...' ({len(chunk)} chars)")
-            
-            chunk_start_time = time.time()
-            
-            # Set seed if provided
-            if seed_num != 0:
-                set_seed(int(seed_num))
-            
-            # Generate audio for this chunk
-            result = GLOBAL_MODEL.generate(
-                text=chunk,
-                audio_prompt_path=ref_wav,
-                exaggeration=exaggeration,
-                temperature=temp,
-                cfg_weight=cfg_weight,
-                min_p=min_p,
-                top_p=top_p,
-                repetition_penalty=repetition_penalty,
-                steps=steps
-            )
-            
-            if result is None:
-                logger.error(f"   ❌ Failed to generate chunk {i+1}")
-                continue
-            
-            # The model returns just the audio tensor, not (sr, audio)
-            audio = result.squeeze(0).cpu().numpy()
-            audio_chunks.append(audio)
-            
-            # Log chunk timing
-            chunk_time = time.time() - chunk_start_time
-            chunk_duration = len(audio) / GLOBAL_MODEL.sr
-            chunk_rtf = chunk_time / chunk_duration
-            
-            if len(chunks) > 1:
-                logger.info(f"   ✓ Generated {chunk_duration:.2f}s in {chunk_time:.2f}s (RTF: {chunk_rtf:.2f})")
-            
-            # Progress update for very long texts
-            if len(chunks) > 20 and (i + 1) % 10 == 0:
-                elapsed = time.time() - total_start_time
-                avg_per_chunk = elapsed / (i + 1)
-                remaining = avg_per_chunk * (len(chunks) - i - 1)
-                logger.info(f"   Progress: {i+1}/{len(chunks)} chunks complete. Est. time remaining: {remaining:.1f}s")
+
+        # Process chunks
+        audio_chunks = _process_chunks(
+            chunks=chunks,
+            ref_wav=ref_wav,
+            generation_config=generation_config,
+            seed_num=seed_num
+        )
         
         if not audio_chunks:
             logger.error("❌ No audio chunks generated")
             return None
         
         # Combine all audio chunks
-        if len(audio_chunks) > 1:
-            combined_audio = np.concatenate(audio_chunks)
-        else:
-            combined_audio = audio_chunks[0]
-        
+        combined_audio = _combine_audio_chunks(audio_chunks)
+
         # Log final timing
         total_time = time.time() - total_start_time
-        total_duration = len(combined_audio) / GLOBAL_MODEL.sr
-        total_rtf = total_time / total_duration
-        
-        logger.info(f"✅ Total: Generated {total_duration:.2f}s of audio in {total_time:.2f}s (RTF: {total_rtf:.2f})")
-        
+        if len(combined_audio) > 0:
+            total_duration = len(combined_audio) / GLOBAL_MODEL.sr
+            total_rtf = total_time / total_duration
+            logger.info(f"✅ Total: Generated {total_duration:.2f}s of audio in {total_time:.2f}s (RTF: {total_rtf:.2f})")
+        else:
+             logger.info(f"✅ Total: Generation finished in {total_time:.2f}s, but no audio was produced.")
+
         return GLOBAL_MODEL.sr, combined_audio
         
     except Exception as e:
@@ -459,22 +489,42 @@ with gr.Blocks() as demo:
             # Add generation info display
             generation_info = gr.Markdown(visible=False)
 
-    def generate_with_info(*args):
+    def generate_with_info(text, ref_wav, exaggeration, cfg_weight, steps, seed_num, temp, min_p, top_p, repetition_penalty, enable_chunking, chunk_size):
         """Wrapper to add generation info display"""
         import time
         # Extract text from args to check length
-        text = args[0]
         text_length = len(text)
         
         start_time = time.time()
-        result = generate(*args)
+
+        generation_config = GenerationConfig(
+            temperature=temp,
+            cfg_weight=cfg_weight,
+            min_p=min_p,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            steps=steps,
+            exaggeration=exaggeration
+        )
+        chunking_config = ChunkingConfig(
+            enable_chunking=enable_chunking,
+            chunk_size=chunk_size
+        )
+
+        result = generate(
+            text=text,
+            ref_wav=ref_wav,
+            generation_config=generation_config,
+            chunking_config=chunking_config,
+            seed_num=seed_num
+        )
         end_time = time.time()
         
-        if result is not None:
+        if result is not None and result[1].size > 0:
             sr, audio = result
             duration = len(audio) / sr
             generation_time = end_time - start_time
-            rtf = generation_time / duration
+            rtf = generation_time / duration if duration > 0 else 0
             
             info_text = f"""✅ **Generation complete!**
 - Input text: {text_length:,} characters
@@ -486,7 +536,7 @@ with gr.Blocks() as demo:
             
             return result, gr.update(value=info_text, visible=True)
         else:
-            return None, gr.update(value="❌ Generation failed", visible=True)
+            return (24000, np.array([])), gr.update(value="❌ Generation failed", visible=True)
 
     run_btn.click(
         fn=generate_with_info,

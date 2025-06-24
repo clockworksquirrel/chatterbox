@@ -167,13 +167,13 @@ def load_and_prepare_model():
         logger.info("ℹ️  Step 2: Skipping GPU transfer (CPU-only mode)")
     
     # Step 3: Apply BetterTransformer optimization
-    logger.info("⚡ Step 3: Applying BetterTransformer optimization...")
-    try:
-        opt_start = time.time()
-        model.s3gen = BetterTransformer.transform(model.s3gen)
-        logger.info(f"✅ BetterTransformer applied in {time.time() - opt_start:.2f} seconds")
-    except Exception as e:
-        logger.warning(f"⚠️  Could not apply BetterTransformer: {e}")
+    # logger.info("⚡ Step 3: Applying BetterTransformer optimization...")
+    # try:
+    #     opt_start = time.time()
+    #     model.s3gen = BetterTransformer.transform(model.s3gen)
+    #     logger.info(f"✅ BetterTransformer applied in {time.time() - opt_start:.2f} seconds")
+    # except Exception as e:
+    #     logger.warning(f"⚠️  Could not apply BetterTransformer: {e}")
     
     # Step 4: Warm up the model
     logger.info("🔥 Step 4: Warming up the model...")
