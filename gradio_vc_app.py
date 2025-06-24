@@ -167,13 +167,13 @@ def load_and_prepare_model():
         logger.info("ℹ️  Step 2: Skipping GPU transfer (CPU-only mode)")
     
     # Step 3: Apply BetterTransformer optimization
-    logger.info("⚡ Step 3: Applying BetterTransformer optimization...")
-    try:
-        opt_start = time.time()
-        model.s3gen = BetterTransformer.transform(model.s3gen)
-        logger.info(f"✅ BetterTransformer applied in {time.time() - opt_start:.2f} seconds")
-    except Exception as e:
-        logger.warning(f"⚠️  Could not apply BetterTransformer: {e}")
+    # logger.info("⚡ Step 3: Applying BetterTransformer optimization...")
+    # try:
+    #     opt_start = time.time()
+    #     model.s3gen = BetterTransformer.transform(model.s3gen)
+    #     logger.info(f"✅ BetterTransformer applied in {time.time() - opt_start:.2f} seconds")
+    # except Exception as e:
+    #     logger.warning(f"⚠️  Could not apply BetterTransformer: {e}")
     
     # Step 4: Warm up the model
     logger.info("🔥 Step 4: Warming up the model...")
@@ -256,16 +256,50 @@ with gr.Blocks() as demo:
             run_btn = gr.Button("Convert", variant="primary")
 
         with gr.Column():
-            audio_output = gr.Audio(label="Output Audio")
+            gr.Markdown("### 🎵 Converted Audio")
+            gr.Markdown("*Click the download button (⬇️) in the audio player to save the converted audio file*")
+            audio_output = gr.Audio(
+                label="Output Audio",
+                type="numpy",
+                show_download_button=True,
+                format="wav"
+            )
+            
+            # Add conversion info display
+            conversion_info = gr.Markdown(visible=False)
+
+    def convert_with_info(*args):
+        """Wrapper to add conversion info display"""
+        import time
+        start_time = time.time()
+        result = convert(*args)
+        end_time = time.time()
+        
+        if result is not None:
+            sr, audio = result
+            duration = len(audio) / sr
+            conversion_time = end_time - start_time
+            rtf = conversion_time / duration
+            
+            info_text = f"""✅ **Conversion complete!**
+- Audio duration: {duration:.2f} seconds
+- Conversion time: {conversion_time:.2f} seconds
+- Real-time factor (RTF): {rtf:.2f}x
+- Sample rate: {sr:,} Hz
+- Click the download button above to save"""
+            
+            return result, gr.update(value=info_text, visible=True)
+        
+        return None, gr.update(value="❌ Voice conversion failed", visible=True)
 
     run_btn.click(
-        fn=convert,
+        fn=convert_with_info,
         inputs=[
             src_wav,
             ref_wav,
             seed_num,
         ],
-        outputs=audio_output,
+        outputs=[audio_output, conversion_info],
     )
 
 if __name__ == "__main__":
